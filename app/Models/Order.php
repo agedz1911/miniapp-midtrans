@@ -17,6 +17,7 @@ class Order extends Model
         'payment_status',
         'total_amount',
         'paid_at',
+        'snap_token'
     ];
 
     public function user()

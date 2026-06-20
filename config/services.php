@@ -35,6 +35,10 @@ return [
         ],
     ],
 
-    // midtrans settings removed — payment handled externally or not used
+    'midtrans' => [
+        'client_key' => env('MIDTRANS_CLIENT_KEY'),
+        'server_key' => env('MIDTRANS_SERVER_KEY'),
+        'is_production' => env('MIDTRANS_IS_PRODUCTION', false),
+    ],
 
 ];

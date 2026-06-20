@@ -15,8 +15,11 @@
                     <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Dashboard') }}
                     </flux:sidebar.item>
-                    <flux:sidebar.item icon="home" :href="route('product')" :current="request()->routeIs('product')" wire:navigate>
-                        {{ __('Products') }}
+                    <flux:sidebar.item icon="user" :href="route('product')" :current="request()->routeIs('product')" wire:navigate>
+                        {{ __('My Cart') }}
+                    </flux:sidebar.item>
+                    <flux:sidebar.item icon="shopping-bag" :href="route('orders.create')" :current="request()->routeIs('orders.create')" wire:navigate>
+                        {{ __('Shop') }}
                     </flux:sidebar.item>
                 </flux:sidebar.group>
             </flux:sidebar.nav>

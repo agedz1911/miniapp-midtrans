@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('payment_status')->default('pending');
             $table->unsignedBigInteger('total_amount');
             $table->timestamp('paid_at')->nullable();
+            $table->string('snap_token')->nullable();
             $table->timestamps();
 
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
