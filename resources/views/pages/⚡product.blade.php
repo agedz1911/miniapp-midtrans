@@ -8,7 +8,7 @@ new class extends Component
 
     public function mount()
     {
-        $this->orders = \App\Models\Order::all();
+        $this->orders = \App\Models\Order::where('user_id', auth()->id())->with('items.product')->get();
     }
 };
 ?>

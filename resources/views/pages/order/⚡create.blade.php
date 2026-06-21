@@ -28,6 +28,7 @@ new class extends Component
     public $cartTotal = 0;
     public $snapToken = null;
     public $currentOrderNumber = null;
+    public $paymentLinkUrl = null;
 
     public function mount(): void
     {
@@ -215,6 +216,39 @@ new class extends Component
             }
         }
 
+        // Handle Payment Link via Midtrans
+        if ($this->payment_method === 'payment_link') {
+            try {
+                $resp = $this->createPaymentLink($order);
+                if (is_string($resp) && $resp) {
+                    // Save and expose payment link to the component
+                    $this->paymentLinkUrl = $resp;
+                    $order->snap_token = $resp;
+                    $order->save();
+
+                    // Send email to customer with payment link
+                    try {
+                        $user = Auth::user();
+                        if ($user && $user->email) {
+                            Mail::raw("Silakan selesaikan pembayaran Anda: {$resp}", function ($message) use ($user, $order) {
+                                $message->to($user->email)
+                                    ->subject('Payment Link untuk Order ' . $order->order_number);
+                            });
+                        }
+                    } catch (\Throwable $e) {
+                        Log::warning('Failed sending payment link email: ' . $e->getMessage());
+                        Session::flash('warning', 'Order dibuat, namun email payment link gagal dikirim.');
+                    }
+
+                    Session::flash('success', 'Payment link berhasil dibuat. Klik tombol untuk membuka.');
+                    // do not redirect; show button to user
+                }
+            } catch (\Throwable $e) {
+                Log::error('Midtrans Payment Link error: ' . $e->getMessage());
+                Session::flash('error', 'Gagal membuat payment link: ' . $e->getMessage());
+            }
+        }
+
         Session::flash('success', 'Order berhasil dibuat.');
         $this->cart = [];
     }
@@ -274,6 +308,94 @@ new class extends Component
             throw $e;
         }
     }
+
+    protected function createPaymentLink(Order $order)
+    {
+        $serverKey = config('services.midtrans.server_key') ?? config('services.midtrans.server_key');
+        $isProduction = filter_var(config('services.midtrans.is_production', false), FILTER_VALIDATE_BOOLEAN);
+        $base = $isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com';
+        $url = $base . '/v1/payment-links';
+
+        // Build item details
+        $item_details = [];
+        foreach ($order->items as $item) {
+            $item_details[] = [
+                'id' => (string) $item->product_id,
+                'name' => $item->product->name ?? 'Product',
+                'price' => (int) $item->unit_price,
+                'quantity' => (int) $item->quantity,
+            ];
+        }
+
+        $user = Auth::user();
+
+        $payment_link_id = 'pl-' . Str::slug($order->order_number) . '-' . Str::lower(Str::random(6));
+
+        $payload = [
+            'transaction_details' => [
+                'order_id' => $order->order_number,
+                'gross_amount' => (int) $order->total_amount,
+                'payment_link_id' => $payment_link_id,
+            ],
+            'credit_card' => [
+                'secure' => true,
+            ],
+            'usage_limit' => 1,
+            'expiry' => [
+                'duration' => 3,
+                'unit' => 'days',
+            ],
+            'item_details' => $item_details,
+            'customer_details' => [
+                'first_name' => $user->name ?? 'Customer',
+                'last_name' => $user->last_name ?? '',
+                'email' => $user->email ?? '',
+                'phone' => $user->phone ?? '',
+                'notes' => 'Order ' . $order->order_number,
+            ],
+        ];
+
+        try {
+            $response = Http::withBasicAuth($serverKey, '')->acceptJson()->post($url, $payload);
+
+            Log::info('Midtrans Payment Link request', ['url' => $url, 'payload' => $payload, 'status' => $response->status()]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $paymentUrl = $data['payment_url'] ?? null;
+                if ($paymentUrl) {
+                    $order->snap_token = $paymentUrl;
+                    $order->save();
+                    return $paymentUrl;
+                }
+            }
+
+            $status = $response->status();
+            $body = $response->json();
+            if ($status === 409) {
+                $msg = implode('; ', $body['error_messages'] ?? ['Order ID has been taken']);
+                Session::flash('error', 'Midtrans conflict: ' . $msg);
+                return null;
+            }
+            if ($status === 401) {
+                Session::flash('error', 'Midtrans unauthorized: ' . ($body['error_messages'] ?? 'Access denied'));
+                return null;
+            }
+            if ($status === 400) {
+                $msg = is_array($body['error_messages'] ?? null) ? implode('; ', $body['error_messages']) : ($body['error_messages'] ?? 'Bad Request');
+                Session::flash('error', 'Midtrans bad request: ' . $msg);
+                return null;
+            }
+
+            Session::flash('error', 'Midtrans error: HTTP ' . $status);
+            Log::warning('Midtrans payment link unexpected response', ['status' => $status, 'body' => $body]);
+            return null;
+        } catch (\Throwable $e) {
+            Log::error('Midtrans payment link exception: ' . $e->getMessage());
+            Session::flash('error', 'Gagal membuat payment link: ' . $e->getMessage());
+            return null;
+        }
+    }
 };
 ?>
 
@@ -295,6 +417,17 @@ new class extends Component
     @endif
     @if (session('error'))
     <flux:badge variant="danger">{{ session('error') }}</flux:badge>
+    @endif
+
+    @if ($paymentLinkUrl)
+    <div class="mt-4">
+        <a href="{{ $paymentLinkUrl }}" target="_blank" rel="noopener noreferrer" class="inline-block">
+            <flux:button variant="primary">Buka Payment Link</flux:button>
+        </a>
+        <a href="{{ $paymentLinkUrl }}" target="_blank" rel="noopener noreferrer" class="ml-2 inline-block">
+            <flux:button variant="primary" color="yellow">Buka di Tab Baru</flux:button>
+        </a>
+    </div>
     @endif
 
     <div class="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-6">
@@ -363,6 +496,9 @@ new class extends Component
                             </flux:button>
                             <flux:button variant="primary" color="blue" class="w-full" wire:click="placeOrder('online_payment')">
                                 Online Payment
+                            </flux:button>
+                            <flux:button variant="primary" color="red" class="w-full" wire:click="placeOrder('payment_link')">
+                                Payment Link
                             </flux:button>
                         </div>
                     </flux:card>

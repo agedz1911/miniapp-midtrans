@@ -70,4 +70,9 @@ class User extends Authenticatable implements PasskeyUser
     {
         return $this->hasManyThrough(OrderItem::class, Order::class);
     }
+
+    protected $fillable = [
+        'last_name',
+        'phone'
+    ];
 }
